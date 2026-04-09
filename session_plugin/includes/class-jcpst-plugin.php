@@ -45,6 +45,13 @@ class JCPST_Plugin {
 	private $user_profile;
 
 	/**
+	 * Recently viewed jobs instance.
+	 *
+	 * @var JCPST_Recent_Jobs
+	 */
+	private $recent_jobs;
+
+	/**
 	 * Get singleton instance.
 	 *
 	 * @return JCPST_Plugin
@@ -65,6 +72,7 @@ class JCPST_Plugin {
 		$this->cleanup      = new JCPST_Cleanup();
 		$this->admin        = is_admin() ? new JCPST_Admin() : null;
 		$this->user_profile = is_admin() ? new JCPST_User_Profile() : null;
+		$this->recent_jobs  = new JCPST_Recent_Jobs();
 
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 	}

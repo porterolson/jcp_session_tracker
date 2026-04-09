@@ -164,6 +164,9 @@ class JCPST_Tracker {
 			return;
 		}
 
+		$session    = $this->get_or_create_session( $context );
+		$session_id = ! empty( $session['session_id'] ) ? $session['session_id'] : '';
+
 		wp_register_script(
 			'jcpst-tracker',
 			JCPST_PLUGIN_URL . 'assets/js/jcpst-tracker.js',
@@ -176,9 +179,10 @@ class JCPST_Tracker {
 			'jcpst-tracker',
 			'jcpstTracker',
 			array(
-				'ajaxUrl' => admin_url( 'admin-ajax.php' ),
-				'nonce'   => wp_create_nonce( 'jcpst_track_pageview' ),
-				'enabled' => true,
+				'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
+				'nonce'     => wp_create_nonce( 'jcpst_track_pageview' ),
+				'enabled'   => true,
+				'sessionId' => $session_id,
 			)
 		);
 

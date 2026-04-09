@@ -12,7 +12,7 @@ class JCPST_Installer {
 	/**
 	 * DB schema version.
 	 */
-	const DB_VERSION = '1.0.0';
+	const DB_VERSION = '1.1.0';
 
 	/**
 	 * Activate plugin.
@@ -66,6 +66,7 @@ class JCPST_Installer {
 			ip_hash varchar(128) NULL,
 			user_agent longtext NULL,
 			device_summary varchar(255) NULL,
+			treatment_snapshot longtext NULL,
 			is_logged_in tinyint(1) NOT NULL DEFAULT 0,
 			login_state_changed tinyint(1) NOT NULL DEFAULT 0,
 			created_at datetime NOT NULL,

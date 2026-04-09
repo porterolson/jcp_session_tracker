@@ -287,6 +287,7 @@ class JCPST_Admin {
 					<?php $this->detail_row( __( 'Duration', 'jcp-session-tracker' ), esc_html( $this->format_duration( $session ) ) ); ?>
 					<?php $this->detail_row( __( 'Pageviews', 'jcp-session-tracker' ), esc_html( (string) $session['total_pageviews'] ) ); ?>
 					<?php $this->detail_row( __( 'Visited Pages JSON', 'jcp-session-tracker' ), '<code style="display:block;white-space:pre-wrap;">' . esc_html( wp_json_encode( $this->build_visited_pages_payload( $pageviews ), JSON_PRETTY_PRINT ) ) . '</code>' ); ?>
+					<?php $this->detail_row( __( 'Treatment Snapshot JSON', 'jcp-session-tracker' ), '<code style="display:block;white-space:pre-wrap;">' . esc_html( $this->format_snapshot_json( isset( $session['treatment_snapshot'] ) ? $session['treatment_snapshot'] : '' ) ) . '</code>' ); ?>
 					<?php $this->detail_row( __( 'First Referrer', 'jcp-session-tracker' ), esc_html( $session['first_referrer'] ) ); ?>
 					<?php $this->detail_row( __( 'First IP', 'jcp-session-tracker' ), esc_html( $session['first_ip'] ) ); ?>
 					<?php $this->detail_row( __( 'Last IP', 'jcp-session-tracker' ), esc_html( $session['last_ip'] ) ); ?>
@@ -375,6 +376,7 @@ class JCPST_Admin {
 				'duration_seconds'    => $duration,
 				'total_pageviews'     => (int) $row['total_pageviews'],
 				'visited_pages'       => isset( $row['visited_pages'] ) && is_array( $row['visited_pages'] ) ? $row['visited_pages'] : array(),
+				'treatment_snapshot'  => $this->decode_snapshot_json( isset( $row['treatment_snapshot'] ) ? $row['treatment_snapshot'] : '' ),
 				'first_referrer'      => $row['first_referrer'],
 				'first_ip'            => $row['first_ip'],
 				'last_ip'             => $row['last_ip'],
@@ -463,6 +465,31 @@ class JCPST_Admin {
 	}
 
 	/**
+	 * Decode treatment snapshot JSON into an array.
+	 *
+	 * @param string $snapshot Raw snapshot JSON.
+	 * @return array<int, mixed>
+	 */
+	private function decode_snapshot_json( $snapshot ) {
+		if ( ! is_string( $snapshot ) || '' === $snapshot ) {
+			return array();
+		}
+
+		$decoded = json_decode( $snapshot, true );
+		return is_array( $decoded ) ? $decoded : array();
+	}
+
+	/**
+	 * Pretty-print treatment snapshot JSON for admin detail view.
+	 *
+	 * @param string $snapshot Raw snapshot JSON.
+	 * @return string
+	 */
+	private function format_snapshot_json( $snapshot ) {
+		return wp_json_encode( $this->decode_snapshot_json( $snapshot ), JSON_PRETTY_PRINT );
+	}
+
+	/**
 	 * Output a single session payload as JSON.
 	 *
 	 * @param array<string, mixed>            $session Session row.
@@ -485,6 +512,7 @@ class JCPST_Admin {
 					'session_end'         => $session['session_end'],
 					'total_pageviews'     => (int) $session['total_pageviews'],
 					'visited_pages'       => $this->build_visited_pages_payload( $pageviews ),
+					'treatment_snapshot'  => $this->decode_snapshot_json( isset( $session['treatment_snapshot'] ) ? $session['treatment_snapshot'] : '' ),
 					'first_referrer'      => $session['first_referrer'],
 					'first_ip'            => $session['first_ip'],
 					'last_ip'             => $session['last_ip'],
