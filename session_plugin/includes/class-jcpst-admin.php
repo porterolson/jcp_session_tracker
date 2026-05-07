@@ -267,7 +267,11 @@ class JCPST_Admin {
 			ARRAY_A
 		);
 
-		$user = ! empty( $session['user_id'] ) ? get_userdata( (int) $session['user_id'] ) : null;
+		$user          = ! empty( $session['user_id'] ) ? get_userdata( (int) $session['user_id'] ) : null;
+		$survey_rows   = $this->fetch_survey_rows_by_session_ids( array( $session_id ) );
+		$linkedin_rows = ! empty( $session['user_id'] ) ? $this->fetch_linkedin_rows_by_user_ids( array( (int) $session['user_id'] ) ) : array();
+		$survey_rows   = isset( $survey_rows[ $session_id ] ) ? $survey_rows[ $session_id ] : array();
+		$linkedin_rows = ! empty( $session['user_id'] ) && isset( $linkedin_rows[ (int) $session['user_id'] ] ) ? $linkedin_rows[ (int) $session['user_id'] ] : array();
 
 		if ( isset( $_GET['format'] ) && 'json' === sanitize_text_field( wp_unslash( $_GET['format'] ) ) ) {
 			$this->output_single_session_json( $session, $pageviews, $user );
@@ -328,6 +332,12 @@ class JCPST_Admin {
 					<?php endif; ?>
 				</tbody>
 			</table>
+
+			<h2 style="margin-top:24px;"><?php esc_html_e( 'Matched Survey Rows', 'jcp-session-tracker' ); ?></h2>
+			<?php $this->render_records_json_table( $survey_rows, __( 'No survey rows matched this session ID.', 'jcp-session-tracker' ) ); ?>
+
+			<h2 style="margin-top:24px;"><?php esc_html_e( 'Matched LinkedIn Rows', 'jcp-session-tracker' ); ?></h2>
+			<?php $this->render_records_json_table( $linkedin_rows, __( 'No LinkedIn rows matched this session user.', 'jcp-session-tracker' ) ); ?>
 		</div>
 		<?php
 	}
@@ -359,41 +369,16 @@ class JCPST_Admin {
 		header( 'Content-Type: application/json; charset=utf-8' );
 		header( 'Content-Disposition: attachment; filename=jcpst-sessions-' . gmdate( 'Y-m-d-H-i-s' ) . '.json' );
 
-		$export_rows = array();
-
-		foreach ( $rows as $row ) {
-			$user         = ! empty( $row['user_id'] ) ? get_userdata( (int) $row['user_id'] ) : null;
-			$start        = strtotime( $row['session_start'] . ' UTC' );
-			$end          = ! empty( $row['session_end'] ) ? strtotime( $row['session_end'] . ' UTC' ) : strtotime( $row['last_activity'] . ' UTC' );
-			$duration     = max( 0, $end - $start );
-			$export_rows[] = array(
-				'session_id'          => $row['session_id'],
-				'user_id'             => $row['user_id'],
-				'user_display_name'   => $user ? $user->display_name : '',
-				'session_start'       => $row['session_start'],
-				'last_activity'       => $row['last_activity'],
-				'session_end'         => $row['session_end'],
-				'duration_seconds'    => $duration,
-				'total_pageviews'     => (int) $row['total_pageviews'],
-				'visited_pages'       => isset( $row['visited_pages'] ) && is_array( $row['visited_pages'] ) ? $row['visited_pages'] : array(),
-				'treatment_snapshot'  => $this->decode_snapshot_json( isset( $row['treatment_snapshot'] ) ? $row['treatment_snapshot'] : '' ),
-				'first_referrer'      => $row['first_referrer'],
-				'first_ip'            => $row['first_ip'],
-				'last_ip'             => $row['last_ip'],
-				'ip_hash'             => $row['ip_hash'],
-				'user_agent'          => $row['user_agent'],
-				'device_summary'      => $row['device_summary'],
-				'is_logged_in'        => (bool) $row['is_logged_in'],
-				'login_state_changed' => (bool) $row['login_state_changed'],
-				'created_at'          => $row['created_at'],
-				'updated_at'          => $row['updated_at'],
-			);
-		}
+		$export_rows = $this->build_merged_export_rows( $rows );
 
 		echo wp_json_encode(
 			array(
 				'exported_at' => gmdate( 'c' ),
 				'count'       => count( $export_rows ),
+				'match_keys'  => array(
+					'survey'   => 'session_id',
+					'linkedin' => 'user_id',
+				),
 				'sessions'    => $export_rows,
 			),
 			JSON_PRETTY_PRINT
@@ -410,6 +395,81 @@ class JCPST_Admin {
 	 */
 	private function detail_row( $label, $value ) {
 		echo '<tr><th style="width:220px;">' . esc_html( $label ) . '</th><td>' . $value . '</td></tr>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	}
+
+	/**
+	 * Render matched records as a compact table with expandable JSON.
+	 *
+	 * @param array<int, array<string, mixed>> $records Records.
+	 * @param string                           $empty_message Empty-state message.
+	 * @return void
+	 */
+	private function render_records_json_table( $records, $empty_message ) {
+		if ( empty( $records ) ) {
+			echo '<p>' . esc_html( $empty_message ) . '</p>';
+			return;
+		}
+		?>
+		<table class="widefat striped">
+			<thead>
+				<tr>
+					<th style="width:80px;"><?php esc_html_e( '#', 'jcp-session-tracker' ); ?></th>
+					<th><?php esc_html_e( 'Data', 'jcp-session-tracker' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( array_values( $records ) as $index => $record ) : ?>
+					<tr>
+						<td><?php echo esc_html( (string) ( $index + 1 ) ); ?></td>
+						<td>
+							<details>
+								<summary><?php echo esc_html( $this->summarize_record( $record ) ); ?></summary>
+								<code style="display:block;white-space:pre-wrap;margin-top:8px;"><?php echo esc_html( wp_json_encode( $record, JSON_PRETTY_PRINT ) ); ?></code>
+							</details>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php
+	}
+
+	/**
+	 * Create a compact summary for a record row.
+	 *
+	 * @param array<string, mixed> $record Record data.
+	 * @return string
+	 */
+	private function summarize_record( $record ) {
+		$preferred_keys = array(
+			'survey_id',
+			'treatment_group',
+			'job_ad_url',
+			'date',
+			'linkedin_member_id',
+			'email',
+			'last_synced_at',
+		);
+		$parts          = array();
+
+		foreach ( $preferred_keys as $key ) {
+			if ( ! array_key_exists( $key, $record ) ) {
+				continue;
+			}
+
+			$value = $record[ $key ];
+			if ( is_array( $value ) || is_object( $value ) || '' === (string) $value ) {
+				continue;
+			}
+
+			$parts[] = $key . ': ' . (string) $value;
+
+			if ( count( $parts ) >= 3 ) {
+				break;
+			}
+		}
+
+		return ! empty( $parts ) ? implode( ' | ', $parts ) : __( 'View matched row JSON', 'jcp-session-tracker' );
 	}
 
 	/**
@@ -501,33 +561,315 @@ class JCPST_Admin {
 		nocache_headers();
 		header( 'Content-Type: application/json; charset=utf-8' );
 
+		$merged_rows = $this->build_merged_export_rows( array( $session ), array( $session['session_id'] => $pageviews ) );
+
 		echo wp_json_encode(
 			array(
-				'session' => array(
-					'session_id'          => $session['session_id'],
-					'user_id'             => $session['user_id'],
-					'user_display_name'   => $user ? $user->display_name : '',
-					'session_start'       => $session['session_start'],
-					'last_activity'       => $session['last_activity'],
-					'session_end'         => $session['session_end'],
-					'total_pageviews'     => (int) $session['total_pageviews'],
-					'visited_pages'       => $this->build_visited_pages_payload( $pageviews ),
-					'treatment_snapshot'  => $this->decode_snapshot_json( isset( $session['treatment_snapshot'] ) ? $session['treatment_snapshot'] : '' ),
-					'first_referrer'      => $session['first_referrer'],
-					'first_ip'            => $session['first_ip'],
-					'last_ip'             => $session['last_ip'],
-					'ip_hash'             => $session['ip_hash'],
-					'user_agent'          => $session['user_agent'],
-					'device_summary'      => $session['device_summary'],
-					'is_logged_in'        => (bool) $session['is_logged_in'],
-					'login_state_changed' => (bool) $session['login_state_changed'],
-					'created_at'          => $session['created_at'],
-					'updated_at'          => $session['updated_at'],
+				'exported_at' => gmdate( 'c' ),
+				'match_keys'  => array(
+					'survey'   => 'session_id',
+					'linkedin' => 'user_id',
 				),
+				'session'     => ! empty( $merged_rows ) ? $merged_rows[0] : $this->build_base_session_payload( $session, $user, $pageviews ),
 			),
 			JSON_PRETTY_PRINT
 		);
 		exit;
+	}
+
+	/**
+	 * Build merged export payloads for session rows.
+	 *
+	 * @param array<int, array<string, mixed>>              $rows Session rows.
+	 * @param array<string, array<int, array<string, mixed>>> $pageviews_override Optional known pageviews keyed by session ID.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function build_merged_export_rows( $rows, $pageviews_override = array() ) {
+		$session_ids = array();
+		$user_ids    = array();
+
+		foreach ( $rows as $row ) {
+			if ( ! empty( $row['session_id'] ) ) {
+				$session_ids[] = (string) $row['session_id'];
+			}
+
+			if ( ! empty( $row['user_id'] ) ) {
+				$user_ids[] = (int) $row['user_id'];
+			}
+		}
+
+		$session_ids       = array_values( array_unique( array_filter( $session_ids ) ) );
+		$user_ids          = array_values( array_unique( array_filter( $user_ids ) ) );
+		$pageviews_by_sid  = ! empty( $pageviews_override ) ? $pageviews_override : $this->fetch_pageviews_by_session_ids( $session_ids );
+		$survey_by_sid     = $this->fetch_survey_rows_by_session_ids( $session_ids );
+		$linkedin_by_user  = $this->fetch_linkedin_rows_by_user_ids( $user_ids );
+		$export_rows       = array();
+
+		foreach ( $rows as $row ) {
+			$session_id = isset( $row['session_id'] ) ? (string) $row['session_id'] : '';
+			$user_id    = ! empty( $row['user_id'] ) ? (int) $row['user_id'] : 0;
+			$user       = $user_id ? get_userdata( $user_id ) : null;
+			$pageviews  = isset( $pageviews_by_sid[ $session_id ] ) ? $pageviews_by_sid[ $session_id ] : array();
+
+			$export_rows[] = array(
+				'session'         => $this->build_base_session_payload( $row, $user, $pageviews ),
+				'pageviews'       => $this->build_pageview_export_payload( $pageviews ),
+				'job_survey_rows' => isset( $survey_by_sid[ $session_id ] ) ? $survey_by_sid[ $session_id ] : array(),
+				'linkedin_rows'   => $user_id && isset( $linkedin_by_user[ $user_id ] ) ? $linkedin_by_user[ $user_id ] : array(),
+			);
+		}
+
+		return $export_rows;
+	}
+
+	/**
+	 * Build the base session payload.
+	 *
+	 * @param array<string, mixed>              $session Session row.
+	 * @param WP_User|null                      $user User object.
+	 * @param array<int, array<string, mixed>>  $pageviews Pageviews.
+	 * @return array<string, mixed>
+	 */
+	private function build_base_session_payload( $session, $user, $pageviews ) {
+		$start    = strtotime( $session['session_start'] . ' UTC' );
+		$end      = ! empty( $session['session_end'] ) ? strtotime( $session['session_end'] . ' UTC' ) : $this->get_effective_session_end_timestamp( $session );
+		$duration = max( 0, $end - $start );
+
+		return array(
+			'session_id'          => $session['session_id'],
+			'user_id'             => $session['user_id'],
+			'user_display_name'   => $user ? $user->display_name : '',
+			'session_start'       => $session['session_start'],
+			'last_activity'       => $session['last_activity'],
+			'session_end'         => $session['session_end'],
+			'duration_seconds'    => $duration,
+			'total_pageviews'     => (int) $session['total_pageviews'],
+			'visited_pages'       => $this->build_visited_pages_payload( $pageviews ),
+			'treatment_snapshot'  => $this->decode_snapshot_json( isset( $session['treatment_snapshot'] ) ? $session['treatment_snapshot'] : '' ),
+			'first_referrer'      => $session['first_referrer'],
+			'first_ip'            => $session['first_ip'],
+			'last_ip'             => $session['last_ip'],
+			'ip_hash'             => $session['ip_hash'],
+			'user_agent'          => $session['user_agent'],
+			'device_summary'      => $session['device_summary'],
+			'is_logged_in'        => (bool) $session['is_logged_in'],
+			'login_state_changed' => (bool) $session['login_state_changed'],
+			'created_at'          => $session['created_at'],
+			'updated_at'          => $session['updated_at'],
+		);
+	}
+
+	/**
+	 * Build full pageview export payload.
+	 *
+	 * @param array<int, array<string, mixed>> $pageviews Pageviews.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function build_pageview_export_payload( $pageviews ) {
+		$payload = array();
+
+		foreach ( $pageviews as $pageview ) {
+			$payload[] = array(
+				'id'            => isset( $pageview['id'] ) ? (int) $pageview['id'] : 0,
+				'session_id'    => isset( $pageview['session_id'] ) ? (string) $pageview['session_id'] : '',
+				'user_id'       => isset( $pageview['user_id'] ) ? (int) $pageview['user_id'] : 0,
+				'visited_at'    => isset( $pageview['visited_at'] ) ? (string) $pageview['visited_at'] : '',
+				'page_url'      => isset( $pageview['page_url'] ) ? (string) $pageview['page_url'] : '',
+				'path'          => isset( $pageview['path'] ) ? (string) $pageview['path'] : '',
+				'query_string'  => isset( $pageview['query_string'] ) ? (string) $pageview['query_string'] : '',
+				'referrer'      => isset( $pageview['referrer'] ) ? (string) $pageview['referrer'] : '',
+				'ip'            => isset( $pageview['ip'] ) ? (string) $pageview['ip'] : '',
+				'user_agent'    => isset( $pageview['user_agent'] ) ? (string) $pageview['user_agent'] : '',
+				'post_id'       => isset( $pageview['post_id'] ) ? (int) $pageview['post_id'] : 0,
+				'page_title'    => isset( $pageview['page_title'] ) ? (string) $pageview['page_title'] : '',
+				'is_admin'      => ! empty( $pageview['is_admin'] ),
+				'is_ajax'       => ! empty( $pageview['is_ajax'] ),
+				'is_logged_in'  => ! empty( $pageview['is_logged_in'] ),
+			);
+		}
+
+		return $payload;
+	}
+
+	/**
+	 * Fetch pageviews keyed by session ID.
+	 *
+	 * @param array<int, string> $session_ids Session IDs.
+	 * @return array<string, array<int, array<string, mixed>>>
+	 */
+	private function fetch_pageviews_by_session_ids( $session_ids ) {
+		global $wpdb;
+
+		$grouped = array();
+		if ( empty( $session_ids ) ) {
+			return $grouped;
+		}
+
+		$table        = $wpdb->prefix . 'jcpst_pageviews';
+		$placeholders = implode( ',', array_fill( 0, count( $session_ids ), '%s' ) );
+		$sql          = $wpdb->prepare( "SELECT * FROM {$table} WHERE session_id IN ({$placeholders}) ORDER BY visited_at ASC", $session_ids );
+		$rows         = $wpdb->get_results( $sql, ARRAY_A );
+
+		foreach ( $rows as $row ) {
+			$key = isset( $row['session_id'] ) ? (string) $row['session_id'] : '';
+			if ( '' === $key ) {
+				continue;
+			}
+
+			if ( ! isset( $grouped[ $key ] ) ) {
+				$grouped[ $key ] = array();
+			}
+
+			$grouped[ $key ][] = $row;
+		}
+
+		return $grouped;
+	}
+
+	/**
+	 * Fetch survey rows keyed by session ID.
+	 *
+	 * @param array<int, string> $session_ids Session IDs.
+	 * @return array<string, array<int, array<string, mixed>>>
+	 */
+	private function fetch_survey_rows_by_session_ids( $session_ids ) {
+		global $wpdb;
+
+		$grouped    = array();
+		$table_name = $wpdb->prefix . 'job_survey';
+
+		if ( empty( $session_ids ) || ! $this->table_has_column( $table_name, 'session_id' ) ) {
+			return $grouped;
+		}
+
+		$order_by     = $this->table_has_column( $table_name, 'date' ) ? 'date ASC' : ( $this->table_has_column( $table_name, 'id' ) ? 'id ASC' : 'session_id ASC' );
+		$placeholders = implode( ',', array_fill( 0, count( $session_ids ), '%s' ) );
+		$sql          = $wpdb->prepare( "SELECT * FROM {$table_name} WHERE session_id IN ({$placeholders}) ORDER BY {$order_by}", $session_ids ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$rows         = $wpdb->get_results( $sql, ARRAY_A );
+
+		foreach ( $rows as $row ) {
+			foreach ( $row as $key => $value ) {
+				$row[ $key ] = $this->maybe_decode_json_string( $value );
+			}
+
+			$key = isset( $row['session_id'] ) ? (string) $row['session_id'] : '';
+			if ( '' === $key ) {
+				continue;
+			}
+
+			if ( ! isset( $grouped[ $key ] ) ) {
+				$grouped[ $key ] = array();
+			}
+
+			$grouped[ $key ][] = $row;
+		}
+
+		return $grouped;
+	}
+
+	/**
+	 * Fetch LinkedIn rows keyed by WordPress user ID.
+	 *
+	 * @param array<int, int> $user_ids User IDs.
+	 * @return array<int, array<int, array<string, mixed>>>
+	 */
+	private function fetch_linkedin_rows_by_user_ids( $user_ids ) {
+		global $wpdb;
+
+		$grouped    = array();
+		$table_name = $wpdb->prefix . 'linkedin_user_data';
+
+		if ( empty( $user_ids ) || ! $this->table_exists( $table_name ) ) {
+			return $grouped;
+		}
+
+		$placeholders = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
+		$sql          = $wpdb->prepare( "SELECT * FROM {$table_name} WHERE user_id IN ({$placeholders}) ORDER BY id ASC", $user_ids );
+		$rows         = $wpdb->get_results( $sql, ARRAY_A );
+
+		foreach ( $rows as $row ) {
+			$row = array(
+				'id'                 => isset( $row['id'] ) ? (int) $row['id'] : 0,
+				'user_id'            => isset( $row['user_id'] ) ? (int) $row['user_id'] : 0,
+				'linkedin_member_id' => isset( $row['linkedin_member_id'] ) ? (string) $row['linkedin_member_id'] : '',
+				'email'              => isset( $row['email'] ) ? (string) $row['email'] : '',
+				'profile_data'       => $this->maybe_decode_json_string( isset( $row['profile_data'] ) ? $row['profile_data'] : '' ),
+				'verification_data'  => $this->maybe_decode_json_string( isset( $row['verification_data'] ) ? $row['verification_data'] : '' ),
+				'token_expires_at'   => isset( $row['token_expires_at'] ) ? (string) $row['token_expires_at'] : '',
+				'last_synced_at'     => isset( $row['last_synced_at'] ) ? (string) $row['last_synced_at'] : '',
+				'last_ip'            => $this->maybe_decode_json_string( isset( $row['last_ip'] ) ? $row['last_ip'] : '' ),
+				'created_at'         => isset( $row['created_at'] ) ? (string) $row['created_at'] : '',
+				'updated_at'         => isset( $row['updated_at'] ) ? (string) $row['updated_at'] : '',
+			);
+
+			$key = (int) $row['user_id'];
+			if ( $key <= 0 ) {
+				continue;
+			}
+
+			if ( ! isset( $grouped[ $key ] ) ) {
+				$grouped[ $key ] = array();
+			}
+
+			$grouped[ $key ][] = $row;
+		}
+
+		return $grouped;
+	}
+
+	/**
+	 * Determine whether a table exists.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool
+	 */
+	private function table_exists( $table_name ) {
+		global $wpdb;
+
+		$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+		return $found === $table_name;
+	}
+
+	/**
+	 * Determine whether a table has a column.
+	 *
+	 * @param string $table_name Table name.
+	 * @param string $column_name Column name.
+	 * @return bool
+	 */
+	private function table_has_column( $table_name, $column_name ) {
+		global $wpdb;
+
+		if ( ! $this->table_exists( $table_name ) ) {
+			return false;
+		}
+
+		$columns = $wpdb->get_col( "DESC {$table_name}", 0 ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		return in_array( $column_name, $columns, true );
+	}
+
+	/**
+	 * Attempt to decode a JSON string; otherwise return scalar string.
+	 *
+	 * @param mixed $value Raw value.
+	 * @return mixed
+	 */
+	private function maybe_decode_json_string( $value ) {
+		if ( ! is_string( $value ) ) {
+			return $value;
+		}
+
+		$trimmed = trim( $value );
+		if ( '' === $trimmed ) {
+			return '';
+		}
+
+		if ( ! in_array( $trimmed[0], array( '{', '[' ), true ) ) {
+			return $value;
+		}
+
+		$decoded = json_decode( $trimmed, true );
+		return JSON_ERROR_NONE === json_last_error() ? $decoded : $value;
 	}
 
 	/**

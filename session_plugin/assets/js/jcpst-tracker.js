@@ -8,6 +8,16 @@
 		return;
 	}
 
+	function isLikelyLoggedIn() {
+		return document.cookie.split(';').some(function (cookie) {
+			return cookie.trim().indexOf('wordpress_logged_in_') === 0;
+		});
+	}
+
+	if (isLikelyLoggedIn()) {
+		return;
+	}
+
 	var currentKey = [window.location.pathname || '/', window.location.search || '', document.title || ''].join('|');
 	if (window.sessionStorage) {
 		try {
@@ -29,7 +39,6 @@
 	payload.append('page_title', document.title || '');
 	payload.append('referrer', document.referrer || '');
 	payload.append('is_async', '1');
-	payload.append('_jcpst_nonce', config.nonce || '');
 	payload.append('_jcpst_rand', String(Date.now()));
 
 	var getUrl = config.ajaxUrl
@@ -47,13 +56,12 @@
 		keepalive: true,
 		cache: 'no-store'
 	}).catch(function () {
+		try {
+			var img = new Image();
+			img.src = getUrl;
+		} catch (e) {
+			// Ignore image beacon errors.
+		}
 		return null;
 	});
-
-	try {
-		var img = new Image();
-		img.src = getUrl;
-	} catch (e) {
-		// Ignore image beacon errors.
-	}
 })();

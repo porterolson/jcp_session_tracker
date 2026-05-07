@@ -29,6 +29,8 @@ class JCPST_Tracker {
 		add_action( 'template_redirect', array( $this, 'track_front_request' ), 1 );
 		add_action( 'admin_init', array( $this, 'track_admin_request' ), 1 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_tracking_script' ) );
+		add_action( 'wp_ajax_jcpst_get_session_id', array( $this, 'handle_get_session_id' ) );
+		add_action( 'wp_ajax_nopriv_jcpst_get_session_id', array( $this, 'handle_get_session_id' ) );
 		add_action( 'wp_ajax_jcpst_track_pageview', array( $this, 'handle_async_track_pageview' ) );
 		add_action( 'wp_ajax_nopriv_jcpst_track_pageview', array( $this, 'handle_async_track_pageview' ) );
 		add_action( 'wp_ajax_nopriv_jcpst_track_pageview_get', array( $this, 'handle_async_track_pageview' ) );
@@ -237,6 +239,28 @@ class JCPST_Tracker {
 	}
 
 	/**
+	 * Return the current visitor session ID, creating one when needed.
+	 *
+	 * @return void
+	 */
+	public function handle_get_session_id() {
+		nocache_headers();
+
+		$context = $this->build_session_lookup_context();
+		$session = $this->get_or_create_session( $context );
+
+		if ( empty( $session['session_id'] ) ) {
+			wp_send_json_error( array( 'reason' => 'session_creation_failed' ), 500 );
+		}
+
+		wp_send_json_success(
+			array(
+				'session_id' => $session['session_id'],
+			)
+		);
+	}
+
+	/**
 	 * Build request context once per request.
 	 *
 	 * @param bool $is_admin_request Whether request is admin.
@@ -339,6 +363,47 @@ class JCPST_Tracker {
 			'is_admin_user'  => current_user_can( 'manage_options' ),
 			'timestamp'      => current_time( 'mysql', true ),
 			'device_summary' => $this->summarize_device( isset( $server['HTTP_USER_AGENT'] ) ? sanitize_text_field( $server['HTTP_USER_AGENT'] ) : '' ),
+		);
+	}
+
+	/**
+	 * Build a lightweight request context for runtime session lookup.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function build_session_lookup_context() {
+		$settings    = JCPST_Settings::get();
+		$server      = wp_unslash( $_SERVER ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$referrer    = wp_get_raw_referer();
+		$page_url    = $referrer ? esc_url_raw( $referrer ) : home_url( '/' );
+		$parsed_url  = wp_parse_url( $page_url );
+		$path        = isset( $parsed_url['path'] ) ? sanitize_text_field( $parsed_url['path'] ) : '/';
+		$query       = isset( $parsed_url['query'] ) ? sanitize_text_field( $parsed_url['query'] ) : '';
+		$user_agent  = isset( $server['HTTP_USER_AGENT'] ) ? sanitize_text_field( $server['HTTP_USER_AGENT'] ) : '';
+		$is_logged_in = is_user_logged_in();
+
+		return array(
+			'settings'       => $settings,
+			'request_uri'    => $path . ( $query ? '?' . $query : '' ),
+			'page_url'       => $page_url,
+			'path'           => $path ? $path : '/',
+			'query_string'   => $query,
+			'referrer'       => $referrer ? esc_url_raw( $referrer ) : '',
+			'ip'             => $this->detect_ip_address( $settings, $server ),
+			'user_agent'     => $user_agent,
+			'user_id'        => $is_logged_in ? get_current_user_id() : null,
+			'post_id'        => null,
+			'page_title'     => '',
+			'is_admin'       => false,
+			'is_ajax'        => false,
+			'is_rest'        => false,
+			'is_heartbeat'   => false,
+			'is_prefetch'    => false,
+			'is_bot'         => false,
+			'is_logged_in'   => $is_logged_in,
+			'is_admin_user'  => current_user_can( 'manage_options' ),
+			'timestamp'      => current_time( 'mysql', true ),
+			'device_summary' => $this->summarize_device( $user_agent ),
 		);
 	}
 

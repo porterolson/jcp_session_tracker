@@ -12,7 +12,7 @@ class JCPST_Installer {
 	/**
 	 * DB schema version.
 	 */
-	const DB_VERSION = '1.1.0';
+	const DB_VERSION = '1.2.0';
 
 	/**
 	 * Activate plugin.
@@ -49,6 +49,7 @@ class JCPST_Installer {
 		$charset_collate = $wpdb->get_charset_collate();
 		$sessions_table  = $wpdb->prefix . 'jcpst_sessions';
 		$pageviews_table = $wpdb->prefix . 'jcpst_pageviews';
+		$responses_table = $wpdb->prefix . 'jcpst_job_responses';
 
 		$sessions_sql = "CREATE TABLE {$sessions_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -101,7 +102,25 @@ class JCPST_Installer {
 			KEY post_id (post_id)
 		) {$charset_collate};";
 
+		$responses_sql = "CREATE TABLE {$responses_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			user_id bigint(20) unsigned NOT NULL,
+			job_path varchar(191) NOT NULL,
+			job_url text NULL,
+			job_title text NULL,
+			applied tinyint(1) NOT NULL DEFAULT 0,
+			interviewed tinyint(1) NOT NULL DEFAULT 0,
+			offered tinyint(1) NOT NULL DEFAULT 0,
+			created_at datetime NOT NULL,
+			updated_at datetime NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY user_job (user_id, job_path),
+			KEY job_path (job_path),
+			KEY user_id (user_id)
+		) {$charset_collate};";
+
 		dbDelta( $sessions_sql );
 		dbDelta( $pageviews_sql );
+		dbDelta( $responses_sql );
 	}
 }
